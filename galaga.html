@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaga Clone</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+
+        #gameContainer {
+            position: relative;
+        }
+
+        canvas {
+            display: block;
+            border: 2px solid #0ff;
+            box-shadow: 0 0 20px #0ff, 0 0 40px #0ff;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            text-align: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        h1 {
+            font-size: 48px;
+            color: #0ff;
+            text-shadow: 0 0 10px #0ff, 0 0 20px #0ff, 0 0 30px #0ff;
+            margin-bottom: 20px;
+            letter-spacing: 8px;
+        }
+
+        h2 {
+            font-size: 36px;
+            color: #f0f;
+            text-shadow: 0 0 10px #f0f, 0 0 20px #f0f;
+            margin-bottom: 30px;
+        }
+
+        .instructions {
+            color: #ff0;
+            font-size: 16px;
+            margin-bottom: 30px;
+            line-height: 1.8;
+        }
+
+        .score-display {
+            color: #0f0;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 20px;
+            font-family: 'Courier New', monospace;
+            background: transparent;
+            color: #0ff;
+            border: 2px solid #0ff;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+        }
+
+        button:hover {
+            background: #0ff;
+            color: #000;
+            box-shadow: 0 0 20px #0ff;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="600" height="800"></canvas>
+
+        <!-- Start Screen -->
+        <div id="startScreen" class="overlay">
+            <h1>GALAGA</h1>
+            <div class="instructions">
+                <p>← → or A D to move</p>
+                <p>SPACE to fire</p>
+                <p>Destroy all enemies!</p>
+            </div>
+            <button id="startBtn">Start Game</button>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameOverScreen" class="overlay hidden">
+            <h2>GAME OVER</h2>
+            <div class="score-display">Final Score: <span id="finalScore">0</span></div>
+            <button id="restartBtn">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        // ===========================================
+        // GAME CONSTANTS
+        // ===========================================
+        const CANVAS_WIDTH = 600;
+        const CANVAS_HEIGHT = 800;
+        const PLAYER_SPEED = 6;
+        const BULLET_SPEED = 10;
+        const ENEMY_BULLET_SPEED = 5;
+        const MAX_PLAYER_BULLETS = 3;
+        const STAR_COUNT = 100;
+        const POWERUP_DROP_CHANCE = 0.08;  // 8% chance for power-up drop
+        const DOUBLE_SHOT_DURATION = 600;   // 10 seconds at 60fps
+
+        // ===========================================
+        // STAR CLASS - Creates scrolling starfield
+        // ===========================================
+        class Star {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.reset();
+                // Random starting Y for initial screen fill
+                this.y = Math.random() * canvas.height;
+            }
+
+            reset() {
+                this.x = Math.random() * this.canvas.width;
+                this.y = 0;
+                // Varying sizes create depth illusion
+                this.size = Math.random() * 2 + 0.5;
+                // Faster stars appear closer (parallax effect)
+                this.speed = this.size * 1.5;
+                // Brightness varies with size
+                this.brightness = Math.floor(155 + this.size * 50);
+            }
+
+            update() {
+                this.y += this.speed;
+                if (this.y > this.canvas.height) {
+                    this.reset();
+                }
+            }
+
+            draw(ctx) {
+                ctx.fillStyle = `rgb(${this.brightness}, ${this.brightness}, ${this.brightness})`;
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+            }
+        }
+
+        // ===========================================
+        // PROJECTILE CLASS - Bullets for player/enemy
+        // ===========================================
+        class Projectile {
+            constructor(x, y, speed, isEnemy = false) {
+                this.x = x;
+                this.y = y;
+                this.speed = speed;
+                this.isEnemy = isEnemy;
+                this.width = isEnemy ? 4 : 4;
+                this.height = isEnemy ? 12 : 15;
+                this.active = true;
+            }
+
+            update() {
+                this.y += this.speed;
+                // Deactivate if off screen
+                if (this.y < -this.height || this.y > CANVAS_HEIGHT + this.height) {
+                    this.active = false;
+                }
+            }
+
+            draw(ctx) {
+                if (this.isEnemy) {
+                    // Enemy bullets: red/orange glow
+                    ctx.fillStyle = '#f80';
+                    ctx.shadowColor = '#f00';
+                    ctx.shadowBlur = 10;
+                } else {
+                    // Player bullets: cyan glow
+                    ctx.fillStyle = '#0ff';
+                    ctx.shadowColor = '#0ff';
+                    ctx.shadowBlur = 15;
+                }
+                ctx.fillRect(this.x - this.width / 2, this.y, this.width, this.height);
+                ctx.shadowBlur = 0;
+            }
+
+            getBounds() {
+                return {
+                    x: this.x - this.width / 2,
+                    y: this.y,
+                    width: this.width,
+                    height: this.height
+                };
+            }
+        }
+
+        // ===========================================
+        // PLAYER CLASS
+        // ===========================================
+        class Player {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.width = 40;
+                this.height = 40;
+                this.x = canvas.width / 2;
+                this.y = canvas.height - 80;
+                this.speed = PLAYER_SPEED;
+                this.bullets = [];
+                this.lives = 3;
+                this.invulnerable = false;
+                this.invulnerableTimer = 0;
+                this.flickerOn = true;
+                // Power-up state
+                this.doubleShot = false;
+                this.doubleShotTimer = 0;
+            }
+
+            reset() {
+                this.x = this.canvas.width / 2;
+                this.y = this.canvas.height - 80;
+                this.bullets = [];
+                this.invulnerable = true;
+                this.invulnerableTimer = 120; // 2 seconds at 60fps
+            }
+
+            fullReset() {
+                this.reset();
+                this.lives = 3;
+                this.invulnerable = false;
+                this.doubleShot = false;
+                this.doubleShotTimer = 0;
+            }
+
+            activateDoubleShot() {
+                this.doubleShot = true;
+                this.doubleShotTimer = DOUBLE_SHOT_DURATION;
+            }
+
+            move(direction) {
+                this.x += direction * this.speed;
+                // Keep player in bounds
+                this.x = Math.max(this.width / 2, Math.min(this.canvas.width - this.width / 2, this.x));
+            }
+
+            shoot() {
+                // Limit simultaneous bullets on screen (double for double shot)
+                const maxBullets = this.doubleShot ? MAX_PLAYER_BULLETS * 2 : MAX_PLAYER_BULLETS;
+                if (this.bullets.filter(b => b.active).length < maxBullets) {
+                    if (this.doubleShot) {
+                        // Fire two bullets spread apart
+                        this.bullets.push(new Projectile(this.x - 10, this.y - this.height / 2, -BULLET_SPEED));
+                        this.bullets.push(new Projectile(this.x + 10, this.y - this.height / 2, -BULLET_SPEED));
+                    } else {
+                        this.bullets.push(new Projectile(this.x, this.y - this.height / 2, -BULLET_SPEED));
+                    }
+                }
+            }
+
+            update() {
+                // Handle invulnerability after respawn
+                if (this.invulnerable) {
+                    this.invulnerableTimer--;
+                    this.flickerOn = Math.floor(this.invulnerableTimer / 5) % 2 === 0;
+                    if (this.invulnerableTimer <= 0) {
+                        this.invulnerable = false;
+                        this.flickerOn = true;
+                    }
+                }
+
+                // Handle double shot power-up timer
+                if (this.doubleShot) {
+                    this.doubleShotTimer--;
+                    if (this.doubleShotTimer <= 0) {
+                        this.doubleShot = false;
+                    }
+                }
+
+                // Update bullets
+                this.bullets.forEach(bullet => bullet.update());
+                this.bullets = this.bullets.filter(bullet => bullet.active);
+            }
+
+            draw(ctx) {
+                if (!this.flickerOn) return;
+
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Player ship - triangular design with neon cyan glow
+                // Golden glow when double shot is active
+                const shipColor = this.doubleShot ? '#ff0' : '#0ff';
+                ctx.fillStyle = shipColor;
+                ctx.shadowColor = shipColor;
+                ctx.shadowBlur = this.doubleShot ? 30 : 20;
+
+                // Main body
+                ctx.beginPath();
+                ctx.moveTo(0, -this.height / 2);
+                ctx.lineTo(-this.width / 2, this.height / 2);
+                ctx.lineTo(-this.width / 4, this.height / 4);
+                ctx.lineTo(0, this.height / 3);
+                ctx.lineTo(this.width / 4, this.height / 4);
+                ctx.lineTo(this.width / 2, this.height / 2);
+                ctx.closePath();
+                ctx.fill();
+
+                // Cockpit
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(0, 0, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+                ctx.restore();
+
+                // Draw bullets
+                this.bullets.forEach(bullet => bullet.draw(ctx));
+            }
+
+            getBounds() {
+                return {
+                    x: this.x - this.width / 2,
+                    y: this.y - this.height / 2,
+                    width: this.width,
+                    height: this.height
+                };
+            }
+        }
+
+        // ===========================================
+        // ENEMY CLASS
+        // ===========================================
+        // ENEMY MOVEMENT PATTERN EXPLANATION:
+        //
+        // Enemies have two states: FORMATION and DIVING
+        //
+        // FORMATION STATE:
+        // - Enemies oscillate horizontally using sine wave motion
+        // - formationX/formationY: target position in the formation grid
+        // - oscillationOffset: unique phase offset for wave motion
+        // - The entire formation drifts left/right together
+        //
+        // DIVING STATE:
+        // - Triggered randomly or when formation is partially destroyed
+        // - Enemy swoops down toward player in a curved path
+        // - Uses bezier-like curve: starts curved, then straightens
+        // - diveProgress: 0 to 1 representing dive completion
+        // - After dive, enemy returns to formation (or wraps around)
+        //
+        // To modify patterns:
+        // - Change DIVE_CURVE_INTENSITY for sharper/gentler curves
+        // - Modify oscillationAmplitude for wider/narrower formation sway
+        // - Adjust DIVE_SPEED for faster/slower attack runs
+        // - Change diveChance in Game.update() for more/less aggressive enemies
+        // ===========================================
+
+        class Enemy {
+            constructor(x, y, type = 'basic') {
+                this.formationX = x;  // Target X in formation
+                this.formationY = y;  // Target Y in formation
+                this.x = x;
+                this.y = -50;  // Start above screen
+                this.width = 35;
+                this.height = 35;
+                this.type = type;
+                this.active = true;
+                this.state = 'entering';  // entering, formation, diving, returning
+                this.enterProgress = 0;
+
+                // Diving parameters
+                this.diveProgress = 0;
+                this.diveStartX = 0;
+                this.diveStartY = 0;
+                this.diveTargetX = 0;
+                this.diveCurveDirection = 1;
+
+                // Formation oscillation
+                this.oscillationOffset = Math.random() * Math.PI * 2;
+                this.oscillationSpeed = 0.02;
+                this.oscillationAmplitude = 30;
+
+                // Shooting
+                this.shootCooldown = 0;
+                this.bullets = [];
+
+                // Visual
+                this.animFrame = 0;
+                this.setTypeProperties();
+            }
+
+            setTypeProperties() {
+                switch(this.type) {
+                    case 'commander':
+                        this.color = '#f0f';      // Magenta
+                        this.glowColor = '#f0f';
+                        this.points = 150;
+                        this.shootChance = 0.004;  // Halved from 0.008
+                        break;
+                    case 'guard':
+                        this.color = '#ff0';      // Yellow
+                        this.glowColor = '#ff0';
+                        this.points = 100;
+                        this.shootChance = 0.0025; // Halved from 0.005
+                        break;
+                    default: // basic
+                        this.color = '#0f0';      // Green
+                        this.glowColor = '#0f0';
+                        this.points = 50;
+                        this.shootChance = 0.0015; // Halved from 0.003
+                }
+            }
+
+            // Start a diving attack toward the player
+            startDive(playerX) {
+                if (this.state !== 'formation') return;
+
+                this.state = 'diving';
+                this.diveProgress = 0;
+                this.diveStartX = this.x;
+                this.diveStartY = this.y;
+                this.diveTargetX = playerX;
+                // Random curve direction for variety
+                this.diveCurveDirection = Math.random() > 0.5 ? 1 : -1;
+            }
+
+            update(formationOffsetX, playerX, speedMultiplier = 1.0) {
+                this.animFrame += 0.1 * speedMultiplier;
+
+                switch(this.state) {
+                    case 'entering':
+                        // Smooth entry from top of screen to formation position
+                        this.enterProgress += 0.02 * speedMultiplier;
+                        this.y = -50 + (this.formationY + 50) * this.easeOutCubic(this.enterProgress);
+                        this.x = this.formationX + formationOffsetX;
+
+                        if (this.enterProgress >= 1) {
+                            this.state = 'formation';
+                            this.y = this.formationY;
+                        }
+                        break;
+
+                    case 'formation':
+                        // Oscillate in formation with sine wave
+                        // Each enemy has unique offset for organic movement
+                        const oscillation = Math.sin(this.animFrame * this.oscillationSpeed + this.oscillationOffset)
+                                          * this.oscillationAmplitude;
+                        this.x = this.formationX + formationOffsetX + oscillation;
+                        this.y = this.formationY + Math.sin(this.animFrame * 0.05) * 5;
+
+                        // Random shooting - faster with difficulty
+                        if (Math.random() < this.shootChance * speedMultiplier && this.shootCooldown <= 0) {
+                            this.shoot();
+                            this.shootCooldown = Math.floor(60 / speedMultiplier); // Faster cooldown
+                        }
+                        break;
+
+                    case 'diving':
+                        // DIVE PATTERN:
+                        // Uses quadratic bezier-like curve
+                        // Control point is offset horizontally for swooping effect
+                        this.diveProgress += 0.005 * speedMultiplier;  // DIVE_SPEED - scaled by difficulty
+
+                        const t = this.diveProgress;
+                        const DIVE_CURVE_INTENSITY = 150;  // How far the curve bends
+
+                        // Bezier curve calculation
+                        // P0 = start, P1 = control (curve peak), P2 = target bottom
+                        const controlX = this.diveStartX + (DIVE_CURVE_INTENSITY * this.diveCurveDirection);
+                        const controlY = (this.diveStartY + CANVAS_HEIGHT) / 2;
+
+                        // Quadratic bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
+                        this.x = Math.pow(1-t, 2) * this.diveStartX +
+                                2 * (1-t) * t * controlX +
+                                Math.pow(t, 2) * this.diveTargetX;
+                        this.y = Math.pow(1-t, 2) * this.diveStartY +
+                                2 * (1-t) * t * controlY +
+                                Math.pow(t, 2) * (CANVAS_HEIGHT + 50);
+
+                        // Shoot while diving (halved from 0.02)
+                        if (t > 0.3 && t < 0.7 && Math.random() < 0.01 * speedMultiplier) {
+                            this.shoot();
+                        }
+
+                        // After completing dive, return to formation
+                        if (this.diveProgress >= 1) {
+                            this.state = 'returning';
+                            this.y = -50;
+                            this.enterProgress = 0;
+                        }
+                        break;
+
+                    case 'returning':
+                        // Re-enter formation from top
+                        this.enterProgress += 0.025 * speedMultiplier;
+                        this.y = -50 + (this.formationY + 50) * this.easeOutCubic(this.enterProgress);
+                        this.x = this.formationX + formationOffsetX;
+
+                        if (this.enterProgress >= 1) {
+                            this.state = 'formation';
+                        }
+                        break;
+                }
+
+                if (this.shootCooldown > 0) this.shootCooldown--;
+
+                // Update bullets
+                this.bullets.forEach(b => b.update());
+                this.bullets = this.bullets.filter(b => b.active);
+            }
+
+            easeOutCubic(t) {
+                return 1 - Math.pow(1 - t, 3);
+            }
+
+            shoot() {
+                this.bullets.push(new Projectile(this.x, this.y + this.height / 2, ENEMY_BULLET_SPEED, true));
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Wing flap animation
+                const wingAngle = Math.sin(this.animFrame * 0.3) * 0.2;
+
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.glowColor;
+                ctx.shadowBlur = 15;
+
+                // Draw different shapes based on type
+                switch(this.type) {
+                    case 'commander':
+                        // Commander: larger, more menacing
+                        this.drawCommander(ctx, wingAngle);
+                        break;
+                    case 'guard':
+                        // Guard: medium, angular
+                        this.drawGuard(ctx, wingAngle);
+                        break;
+                    default:
+                        // Basic: simple insect-like
+                        this.drawBasic(ctx, wingAngle);
+                }
+
+                ctx.shadowBlur = 0;
+                ctx.restore();
+
+                // Draw bullets
+                this.bullets.forEach(b => b.draw(ctx));
+            }
+
+            drawBasic(ctx, wingAngle) {
+                // Body
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 8, 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Left wing
+                ctx.save();
+                ctx.rotate(-wingAngle);
+                ctx.beginPath();
+                ctx.ellipse(-12, -2, 10, 6, -0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                // Right wing
+                ctx.save();
+                ctx.rotate(wingAngle);
+                ctx.beginPath();
+                ctx.ellipse(12, -2, 10, 6, 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-4, -5, 3, 0, Math.PI * 2);
+                ctx.arc(4, -5, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawGuard(ctx, wingAngle) {
+                // Angular body
+                ctx.beginPath();
+                ctx.moveTo(0, -15);
+                ctx.lineTo(10, 0);
+                ctx.lineTo(5, 15);
+                ctx.lineTo(-5, 15);
+                ctx.lineTo(-10, 0);
+                ctx.closePath();
+                ctx.fill();
+
+                // Wings
+                ctx.save();
+                ctx.rotate(-wingAngle * 1.5);
+                ctx.beginPath();
+                ctx.moveTo(-8, -5);
+                ctx.lineTo(-20, -10);
+                ctx.lineTo(-18, 5);
+                ctx.lineTo(-8, 5);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+
+                ctx.save();
+                ctx.rotate(wingAngle * 1.5);
+                ctx.beginPath();
+                ctx.moveTo(8, -5);
+                ctx.lineTo(20, -10);
+                ctx.lineTo(18, 5);
+                ctx.lineTo(8, 5);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+
+                // Eye
+                ctx.fillStyle = '#f00';
+                ctx.beginPath();
+                ctx.arc(0, -5, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawCommander(ctx, wingAngle) {
+                // Large central body
+                ctx.beginPath();
+                ctx.moveTo(0, -18);
+                ctx.lineTo(12, -5);
+                ctx.lineTo(12, 10);
+                ctx.lineTo(0, 18);
+                ctx.lineTo(-12, 10);
+                ctx.lineTo(-12, -5);
+                ctx.closePath();
+                ctx.fill();
+
+                // Elaborate wings
+                ctx.save();
+                ctx.rotate(-wingAngle * 2);
+                ctx.beginPath();
+                ctx.moveTo(-10, -8);
+                ctx.lineTo(-25, -15);
+                ctx.lineTo(-22, 0);
+                ctx.lineTo(-25, 10);
+                ctx.lineTo(-10, 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+
+                ctx.save();
+                ctx.rotate(wingAngle * 2);
+                ctx.beginPath();
+                ctx.moveTo(10, -8);
+                ctx.lineTo(25, -15);
+                ctx.lineTo(22, 0);
+                ctx.lineTo(25, 10);
+                ctx.lineTo(10, 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+
+                // Multiple eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-5, -8, 3, 0, Math.PI * 2);
+                ctx.arc(5, -8, 3, 0, Math.PI * 2);
+                ctx.arc(0, -3, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            getBounds() {
+                return {
+                    x: this.x - this.width / 2,
+                    y: this.y - this.height / 2,
+                    width: this.width,
+                    height: this.height
+                };
+            }
+        }
+
+        // ===========================================
+        // EXPLOSION PARTICLE EFFECT
+        // ===========================================
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.size = Math.random() * 4 + 2;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 5 + 2;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.life = 1;
+                this.decay = Math.random() * 0.03 + 0.02;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.1; // gravity
+                this.life -= this.decay;
+            }
+
+            draw(ctx) {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.life;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // ===========================================
+        // POWERUP CLASS - Collectible power-ups
+        // ===========================================
+        class PowerUp {
+            constructor(x, y, type = 'doubleShot') {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.width = 25;
+                this.height = 25;
+                this.speed = 2;
+                this.active = true;
+                this.animFrame = 0;
+                this.bobOffset = Math.random() * Math.PI * 2;
+            }
+
+            update() {
+                this.y += this.speed;
+                this.animFrame += 0.1;
+
+                // Deactivate if off screen
+                if (this.y > CANVAS_HEIGHT + this.height) {
+                    this.active = false;
+                }
+            }
+
+            draw(ctx) {
+                ctx.save();
+
+                // Bobbing motion
+                const bob = Math.sin(this.animFrame + this.bobOffset) * 3;
+                ctx.translate(this.x, this.y + bob);
+
+                // Rotation
+                ctx.rotate(this.animFrame * 0.05);
+
+                // Outer glow
+                ctx.fillStyle = '#ff0';
+                ctx.shadowColor = '#ff0';
+                ctx.shadowBlur = 20;
+
+                // Draw power-up shape (star-like)
+                ctx.beginPath();
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    const radius = i % 2 === 0 ? this.width / 2 : this.width / 4;
+                    const px = Math.cos(angle) * radius;
+                    const py = Math.sin(angle) * radius;
+                    if (i === 0) {
+                        ctx.moveTo(px, py);
+                    } else {
+                        ctx.lineTo(px, py);
+                    }
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                // Inner detail
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(0, 0, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // "2x" text
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 8px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('2x', 0, 0);
+
+                ctx.restore();
+            }
+
+            getBounds() {
+                return {
+                    x: this.x - this.width / 2,
+                    y: this.y - this.height / 2,
+                    width: this.width,
+                    height: this.height
+                };
+            }
+        }
+
+        // ===========================================
+        // MAIN GAME CLASS
+        // ===========================================
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+
+                this.startScreen = document.getElementById('startScreen');
+                this.gameOverScreen = document.getElementById('gameOverScreen');
+                this.finalScoreEl = document.getElementById('finalScore');
+
+                this.stars = [];
+                this.player = null;
+                this.enemies = [];
+                this.particles = [];
+                this.powerups = [];
+                this.score = 0;
+                this.wave = 1;
+                this.gameState = 'start'; // start, playing, gameover
+
+                // Formation movement
+                this.formationOffsetX = 0;
+                this.formationDirection = 1;
+                this.formationSpeed = 1;
+
+                // Difficulty scaling - increases every 500 points
+                this.difficultyLevel = 0;
+                this.baseEnemySpeedMultiplier = 1.0;
+
+                // Input handling
+                this.keys = {};
+
+                this.init();
+            }
+
+            init() {
+                // Create starfield
+                for (let i = 0; i < STAR_COUNT; i++) {
+                    this.stars.push(new Star(this.canvas));
+                }
+
+                // Event listeners
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+                    if (e.code === 'Space') e.preventDefault();
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+
+                document.getElementById('startBtn').addEventListener('click', () => this.startGame());
+                document.getElementById('restartBtn').addEventListener('click', () => this.startGame());
+
+                // Start game loop
+                this.gameLoop();
+            }
+
+            startGame() {
+                this.gameState = 'playing';
+                this.score = 0;
+                this.wave = 1;
+                this.difficultyLevel = 0;
+                this.baseEnemySpeedMultiplier = 1.0;
+                this.player = new Player(this.canvas);
+                this.player.fullReset();
+                this.enemies = [];
+                this.particles = [];
+                this.powerups = [];
+                this.spawnWave();
+
+                this.startScreen.classList.add('hidden');
+                this.gameOverScreen.classList.add('hidden');
+            }
+
+            // WAVE SPAWNING:
+            // Creates enemy formations with different compositions per wave
+            // Modify the row layouts and types to change difficulty progression
+            spawnWave() {
+                const rows = [
+                    { y: 80, type: 'commander', count: 4 },   // Top row: commanders
+                    { y: 130, type: 'guard', count: 8 },       // Second row: guards
+                    { y: 180, type: 'guard', count: 8 },       // Third row: guards
+                    { y: 230, type: 'basic', count: 10 },      // Fourth row: basic
+                    { y: 280, type: 'basic', count: 10 },      // Fifth row: basic
+                ];
+
+                // Increase enemy count with waves
+                const waveMultiplier = Math.min(this.wave, 5);
+
+                rows.forEach((row, rowIndex) => {
+                    if (rowIndex >= waveMultiplier + 2) return; // Fewer rows in early waves
+
+                    const spacing = CANVAS_WIDTH / (row.count + 1);
+                    for (let i = 0; i < row.count; i++) {
+                        const x = spacing * (i + 1);
+                        const enemy = new Enemy(x, row.y, row.type);
+                        // Stagger entry timing for visual effect
+                        enemy.enterProgress = -rowIndex * 0.1 - i * 0.02;
+                        this.enemies.push(enemy);
+                    }
+                });
+            }
+
+            update() {
+                // Always update stars for background effect
+                this.stars.forEach(star => star.update());
+
+                if (this.gameState !== 'playing') return;
+
+                // DIFFICULTY SCALING: Increase enemy speed every 500 points
+                const newDifficultyLevel = Math.floor(this.score / 500);
+                if (newDifficultyLevel > this.difficultyLevel) {
+                    this.difficultyLevel = newDifficultyLevel;
+                    // Increase speed multiplier by 10% for each difficulty level (cap at 2x)
+                    this.baseEnemySpeedMultiplier = Math.min(1.0 + (this.difficultyLevel * 0.1), 2.0);
+                }
+
+                // Player input
+                if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
+                    this.player.move(-1);
+                }
+                if (this.keys['ArrowRight'] || this.keys['KeyD']) {
+                    this.player.move(1);
+                }
+                if (this.keys['Space']) {
+                    this.player.shoot();
+                    this.keys['Space'] = false; // Prevent auto-fire
+                }
+
+                this.player.update();
+
+                // Formation movement (side to side) - affected by difficulty
+                this.formationOffsetX += this.formationDirection * this.formationSpeed * this.baseEnemySpeedMultiplier;
+                if (Math.abs(this.formationOffsetX) > 50) {
+                    this.formationDirection *= -1;
+                }
+
+                // Update enemies and trigger random dives
+                // DIVE TRIGGER LOGIC:
+                // - diveChance increases with wave number and difficulty
+                // - Only enemies in formation state can dive
+                // - Maximum divers limits chaos
+                const activeEnemies = this.enemies.filter(e => e.active);
+                const divingCount = activeEnemies.filter(e => e.state === 'diving').length;
+                const maxDivers = Math.min(2 + this.wave + this.difficultyLevel, 10);  // More divers with difficulty
+                const diveChance = (0.0005 + (this.wave * 0.001)) * this.baseEnemySpeedMultiplier;  // Faster dives
+
+                this.enemies.forEach(enemy => {
+                    if (enemy.active) {
+                        // Apply speed multiplier to enemy movement
+                        enemy.update(this.formationOffsetX, this.player.x, this.baseEnemySpeedMultiplier);
+
+                        // Random dive trigger
+                        if (enemy.state === 'formation' &&
+                            divingCount < maxDivers &&
+                            Math.random() < diveChance) {
+                            enemy.startDive(this.player.x);
+                        }
+                    }
+                });
+
+                // Update power-ups
+                this.powerups.forEach(p => p.update());
+                this.powerups = this.powerups.filter(p => p.active);
+
+                // Update particles
+                this.particles.forEach(p => p.update());
+                this.particles = this.particles.filter(p => p.life > 0);
+
+                // Collision detection
+                this.checkCollisions();
+
+                // Check wave completion
+                if (activeEnemies.length === 0) {
+                    this.wave++;
+                    this.formationSpeed = Math.min(1 + this.wave * 0.2, 3);
+                    this.spawnWave();
+                }
+            }
+
+            checkCollisions() {
+                // Player bullets vs enemies
+                this.player.bullets.forEach(bullet => {
+                    if (!bullet.active) return;
+
+                    this.enemies.forEach(enemy => {
+                        if (!enemy.active) return;
+
+                        if (this.intersects(bullet.getBounds(), enemy.getBounds())) {
+                            bullet.active = false;
+                            enemy.active = false;
+                            this.score += enemy.points;
+                            this.createExplosion(enemy.x, enemy.y, enemy.color);
+
+                            // Rare power-up drop chance (8%)
+                            if (Math.random() < POWERUP_DROP_CHANCE) {
+                                this.powerups.push(new PowerUp(enemy.x, enemy.y, 'doubleShot'));
+                            }
+                        }
+                    });
+                });
+
+                // Player vs power-ups
+                this.powerups.forEach(powerup => {
+                    if (!powerup.active) return;
+
+                    if (this.intersects(powerup.getBounds(), this.player.getBounds())) {
+                        powerup.active = false;
+                        if (powerup.type === 'doubleShot') {
+                            this.player.activateDoubleShot();
+                            // Visual feedback - small burst of particles
+                            for (let i = 0; i < 10; i++) {
+                                this.particles.push(new Particle(this.player.x, this.player.y, '#ff0'));
+                            }
+                        }
+                    }
+                });
+
+                // Enemy bullets vs player
+                if (!this.player.invulnerable) {
+                    this.enemies.forEach(enemy => {
+                        enemy.bullets.forEach(bullet => {
+                            if (!bullet.active) return;
+
+                            if (this.intersects(bullet.getBounds(), this.player.getBounds())) {
+                                bullet.active = false;
+                                this.playerHit();
+                            }
+                        });
+                    });
+
+                    // Enemy collision with player
+                    this.enemies.forEach(enemy => {
+                        if (!enemy.active) return;
+
+                        if (this.intersects(enemy.getBounds(), this.player.getBounds())) {
+                            enemy.active = false;
+                            this.createExplosion(enemy.x, enemy.y, enemy.color);
+                            this.playerHit();
+                        }
+                    });
+                }
+            }
+
+            intersects(a, b) {
+                return a.x < b.x + b.width &&
+                       a.x + a.width > b.x &&
+                       a.y < b.y + b.height &&
+                       a.y + a.height > b.y;
+            }
+
+            playerHit() {
+                this.player.lives--;
+                this.createExplosion(this.player.x, this.player.y, '#0ff');
+
+                if (this.player.lives <= 0) {
+                    this.gameOver();
+                } else {
+                    this.player.reset();
+                }
+            }
+
+            createExplosion(x, y, color) {
+                for (let i = 0; i < 20; i++) {
+                    this.particles.push(new Particle(x, y, color));
+                }
+            }
+
+            gameOver() {
+                this.gameState = 'gameover';
+                this.finalScoreEl.textContent = this.score;
+                this.gameOverScreen.classList.remove('hidden');
+            }
+
+            draw() {
+                // Clear canvas
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Draw stars
+                this.stars.forEach(star => star.draw(this.ctx));
+
+                if (this.gameState !== 'playing') return;
+
+                // Draw particles
+                this.particles.forEach(p => p.draw(this.ctx));
+
+                // Draw power-ups
+                this.powerups.forEach(powerup => {
+                    if (powerup.active) powerup.draw(this.ctx);
+                });
+
+                // Draw enemies
+                this.enemies.forEach(enemy => {
+                    if (enemy.active) enemy.draw(this.ctx);
+                });
+
+                // Draw player
+                this.player.draw(this.ctx);
+
+                // Draw HUD
+                this.drawHUD();
+            }
+
+            drawHUD() {
+                this.ctx.fillStyle = '#fff';
+                this.ctx.font = '20px "Courier New"';
+                this.ctx.textAlign = 'left';
+                this.ctx.fillText(`SCORE: ${this.score}`, 20, 35);
+
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText(`WAVE ${this.wave}`, this.canvas.width / 2, 35);
+
+                // Difficulty indicator (shows speed multiplier)
+                if (this.difficultyLevel > 0) {
+                    this.ctx.fillStyle = '#f80';
+                    this.ctx.font = '14px "Courier New"';
+                    this.ctx.fillText(`SPEED x${this.baseEnemySpeedMultiplier.toFixed(1)}`, this.canvas.width / 2, 55);
+                }
+
+                // Lives display
+                this.ctx.fillStyle = '#fff';
+                this.ctx.font = '20px "Courier New"';
+                this.ctx.textAlign = 'right';
+                this.ctx.fillText('LIVES:', this.canvas.width - 100, 35);
+
+                for (let i = 0; i < this.player.lives; i++) {
+                    this.ctx.fillStyle = '#0ff';
+                    this.ctx.shadowColor = '#0ff';
+                    this.ctx.shadowBlur = 10;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(this.canvas.width - 80 + i * 25, 25);
+                    this.ctx.lineTo(this.canvas.width - 90 + i * 25, 40);
+                    this.ctx.lineTo(this.canvas.width - 70 + i * 25, 40);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                }
+                this.ctx.shadowBlur = 0;
+
+                // Double shot power-up timer bar
+                if (this.player.doubleShot) {
+                    const barWidth = 150;
+                    const barHeight = 10;
+                    const barX = (this.canvas.width - barWidth) / 2;
+                    const barY = this.canvas.height - 30;
+                    const fillPercent = this.player.doubleShotTimer / DOUBLE_SHOT_DURATION;
+
+                    // Background
+                    this.ctx.fillStyle = '#333';
+                    this.ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                    // Fill
+                    this.ctx.fillStyle = '#ff0';
+                    this.ctx.shadowColor = '#ff0';
+                    this.ctx.shadowBlur = 10;
+                    this.ctx.fillRect(barX, barY, barWidth * fillPercent, barHeight);
+                    this.ctx.shadowBlur = 0;
+
+                    // Label
+                    this.ctx.fillStyle = '#ff0';
+                    this.ctx.font = '12px "Courier New"';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('DOUBLE SHOT', this.canvas.width / 2, barY - 5);
+                }
+            }
+
+            gameLoop() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+
+        // ===========================================
+        // START THE GAME
+        // ===========================================
+        const game = new Game();
+    </script>
+</body>
+</html>
